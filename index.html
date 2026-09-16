@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#1d5a4e" />
+  <title>Nutrizione Clinica · Generatore dieta</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <section id="authView" class="auth-view">
+    <div class="auth-card">
+      <div class="brand-mark">NC</div>
+      <div>
+        <p class="eyebrow">Nutrizione Clinica</p>
+        <h1>Area nutrizionista</h1>
+        <p class="muted">Accedi per creare, revisionare e pubblicare i piani alimentari.</p>
+      </div>
+      <form id="loginForm" class="stack-lg">
+        <label>Email<input id="loginEmail" type="email" autocomplete="email" required /></label>
+        <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required /></label>
+        <button class="btn primary" type="submit">Accedi</button>
+      </form>
+      <p id="loginError" class="error-text"></p>
+    </div>
+  </section>
+
+  <div id="appView" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <div class="brand-mark small">NC</div>
+        <div><strong>Nutrizione Clinica</strong><span>Gestionale nutrizionale</span></div>
+      </div>
+      <nav>
+        <button class="nav-item active" data-scroll="#builderSection">✦ <span>Crea piano</span></button>
+        <button class="nav-item" data-scroll="#planSection">▦ <span>Piano generato</span></button>
+        <button class="nav-item" data-scroll="#historySection">↺ <span>Piani recenti</span></button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="user-chip"><span id="userInitials">N</span><div><strong id="userName">Nutrizionista</strong><small id="userEmail"></small></div></div>
+        <button id="logoutBtn" class="btn ghost full">Esci</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div><p class="eyebrow">Motore dieta v2</p><h2>Crea un piano alimentare</h2></div>
+        <span class="status-pill"><i></i> Motore attivo</span>
+      </header>
+
+      <section id="builderSection" class="grid builder-grid">
+        <div class="content-col">
+          <article class="card">
+            <div class="section-head"><div><span class="step">1</span><h3>Paziente e quadro clinico</h3></div><span class="tag">Fonte: cartella clinica</span></div>
+            <label class="field-label">Paziente
+              <select id="patientSelect"><option value="">Seleziona un paziente…</option></select>
+            </label>
+            <div id="patientContext" class="patient-context empty-state">Seleziona un paziente per caricare visita, BIA, allergie e preferenze.</div>
+          </article>
+
+          <article class="card">
+            <div class="section-head"><div><span class="step">2</span><h3>Target nutrizionali</h3></div><span class="tag accent">Controllo professionista</span></div>
+            <div class="form-grid cols-3">
+              <label>Energia (kcal)<input id="calories" type="number" min="500" max="6000" step="10" value="1700" /></label>
+              <label>Proteine (g)<input id="protein" type="number" min="0" step="1" value="106" /></label>
+              <label>Carboidrati (g)<input id="carbs" type="number" min="0" step="1" value="170" /></label>
+              <label>Grassi (g)<input id="fat" type="number" min="0" step="1" value="66" /></label>
+              <label>Fibra (g)<input id="fiber" type="number" min="0" step="1" value="25" /></label>
+              <label>Sodio max (mg)<input id="sodium" type="number" min="0" step="50" placeholder="es. 2000" /></label>
+            </div>
+            <div class="macro-helper">
+              <span>Calcolo rapido da percentuali:</span>
+              <input id="proteinPct" type="number" value="25" min="0" max="100" aria-label="Proteine percento"><b>% P</b>
+              <input id="carbsPct" type="number" value="40" min="0" max="100" aria-label="Carboidrati percento"><b>% C</b>
+              <input id="fatPct" type="number" value="35" min="0" max="100" aria-label="Grassi percento"><b>% G</b>
+              <button id="applyMacroPct" class="btn small">Applica</button>
+            </div>
+            <div class="form-grid cols-3 compact-top">
+              <label>BMR (kcal)<input id="bmr" type="number" min="0" step="1" placeholder="da BIA o manuale" /></label>
+              <label>TDEE (kcal)<input id="tdee" type="number" min="0" step="1" placeholder="opzionale" /></label>
+              <label>Fattore attività<input id="activityFactor" type="number" min="1" max="3" step="0.05" placeholder="es. 1.45" /></label>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="section-head"><div><span class="step">3</span><h3>Struttura della giornata</h3></div><span id="shareTotal" class="tag">Totale 100%</span></div>
+            <div class="meal-shares">
+              <label><span>Colazione</span><input class="meal-share" data-meal="breakfast" type="number" value="20" min="0" max="100"><b>%</b></label>
+              <label><span>Spuntino</span><input class="meal-share" data-meal="morning_snack" type="number" value="8" min="0" max="100"><b>%</b></label>
+              <label><span>Pranzo</span><input class="meal-share" data-meal="lunch" type="number" value="34" min="0" max="100"><b>%</b></label>
+              <label><span>Merenda</span><input class="meal-share" data-meal="afternoon_snack" type="number" value="8" min="0" max="100"><b>%</b></label>
+              <label><span>Cena</span><input class="meal-share" data-meal="dinner" type="number" value="30" min="0" max="100"><b>%</b></label>
+            </div>
+            <div class="form-grid cols-2 compact-top">
+              <label>Numero giorni<select id="days"><option>7</option><option>6</option><option>5</option><option>4</option><option>3</option></select></label>
+              <label>Schema alimentare<select id="dietaryPattern"><option value="omnivore">Onnivoro</option><option value="vegetarian">Vegetariano</option><option value="vegan">Vegano</option></select></label>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="section-head"><div><span class="step">4</span><h3>Vincoli e preferenze</h3></div><span class="tag danger">Vincoli hard</span></div>
+            <div class="form-grid cols-2">
+              <label>Allergie / intolleranze aggiuntive<textarea id="allergiesExtra" rows="3" placeholder="Una per riga o separate da virgola"></textarea></label>
+              <label>Alimenti da escludere<textarea id="excludedFoods" rows="3" placeholder="es. avocado, salmone affumicato"></textarea></label>
+              <label class="span-2">Preferenze / alimenti graditi<textarea id="preferences" rows="3" placeholder="es. preferisce colazione dolce, legumi a pranzo…"></textarea></label>
+              <label class="span-2">Note cliniche del piano<textarea id="clinicalNotes" rows="3" placeholder="Visibili solo al nutrizionista"></textarea></label>
+            </div>
+          </article>
+
+          <article class="card">
+            <details>
+              <summary><strong>Frequenze settimanali avanzate</strong><span class="muted">Personalizza i limiti del generatore</span></summary>
+              <div class="frequency-grid">
+                <label>Pesce max<input data-freq="fish_seafood" type="number" min="0" max="14" value="4"></label>
+                <label>Legumi max<input data-freq="legume" type="number" min="0" max="14" value="4"></label>
+                <label>Uova max<input data-freq="egg" type="number" min="0" max="14" value="3"></label>
+                <label>Carne rossa max<input data-freq="meat_red" type="number" min="0" max="14" value="1"></label>
+                <label>Pollame max<input data-freq="meat_poultry" type="number" min="0" max="14" value="2"></label>
+                <label>Formaggi max<input data-freq="dairy_cheese" type="number" min="0" max="14" value="2"></label>
+              </div>
+            </details>
+          </article>
+        </div>
+
+        <aside class="side-col">
+          <article class="card sticky-card">
+            <p class="eyebrow">Riepilogo</p>
+            <h3 id="summaryPatient">Nessun paziente</h3>
+            <div class="summary-kpis">
+              <div><span>Kcal</span><strong id="summaryKcal">1700</strong></div>
+              <div><span>Proteine</span><strong id="summaryProtein">106 g</strong></div>
+              <div><span>Carbo</span><strong id="summaryCarbs">170 g</strong></div>
+              <div><span>Grassi</span><strong id="summaryFat">66 g</strong></div>
+            </div>
+            <label>Titolo piano<input id="planTitle" type="text" /></label>
+            <label>Obiettivo<input id="goal" type="text" placeholder="es. Dimagrimento" /></label>
+            <label>Note per il paziente<textarea id="patientNotes" rows="3" placeholder="Indicazioni generali visibili nel piano"></textarea></label>
+            <button id="generateBtn" class="btn primary full large">✦ Genera piano</button>
+            <p class="microcopy">Il piano viene salvato come <strong>bozza</strong>. Il paziente non lo vede finché non lo pubblichi.</p>
+          </article>
+        </aside>
+      </section>
+
+      <section id="planSection" class="section-block">
+        <div class="section-title"><div><p class="eyebrow">Revisione professionale</p><h2>Piano generato</h2></div><div id="planActions" class="actions hidden"><button id="refreshPlanBtn" class="btn">Aggiorna</button><button id="publishPlanBtn" class="btn primary">Pubblica al paziente</button></div></div>
+        <div id="planEmpty" class="card empty-state large-empty">Genera un piano oppure aprine uno recente per visualizzarlo qui.</div>
+        <div id="planOutput" class="hidden"></div>
+      </section>
+
+      <section id="historySection" class="section-block">
+        <div class="section-title"><div><p class="eyebrow">Storico</p><h2>Piani recenti</h2></div></div>
+        <div id="recentPlans" class="card empty-state">Seleziona un paziente per vedere i suoi piani.</div>
+      </section>
+    </main>
+  </div>
+
+  <div id="loadingOverlay" class="loading-overlay hidden"><div class="loader-card"><div class="spinner"></div><h3 id="loadingTitle">Generazione in corso</h3><p id="loadingText">Sto ottimizzando pasti, porzioni, varietà ed equivalenze.</p></div></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
