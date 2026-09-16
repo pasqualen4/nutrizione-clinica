@@ -1,0 +1,177 @@
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = (s='') => String(s ?? '').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const fmt = (v,d=0) => Number(v ?? 0).toLocaleString('it-IT',{maximumFractionDigits:d});
+const dateIt = d => d ? new Date(d).toLocaleDateString('it-IT') : '—';
+const dateTimeIt = d => d ? new Date(d).toLocaleString('it-IT') : '—';
+const today = () => new Date().toISOString().slice(0,10);
+const splitList = text => (text||'').split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);
+const val = id => $(id)?.value ?? '';
+const num = id => Number(val(id)||0);
+const mealLabels={breakfast:'Colazione',morning_snack:'Spuntino',lunch:'Pranzo',afternoon_snack:'Merenda',dinner:'Cena'};
+const dayLabels=['','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato','Domenica'];
+
+let session=null, profile=null, patients=[], selectedPatient=null, selfPatient=null, currentPage=null, currentPlanId=null;
+let generatorEquivalents={};
+
+const nutritionistNav=[
+  ['dashboard','⌂','Dashboard'],['patients','◉','Pazienti'],['visits','▣','Visite'],['bia','◌','BIA'],
+  ['plans','▦','Piani alimentari'],['generator','✦','Genera dieta'],['foods','◇','Alimenti'],['documents','▤','Documenti']
+];
+const patientNav=[['patientHome','⌂','Home'],['patientPlans','▦','Il mio piano'],['patientBia','◌','BIA'],['patientDocuments','▤','Documenti']];
+const pageMeta={
+  dashboard:['Gestionale','Dashboard','Panoramica di pazienti, visite e piani.'],
+  patients:['Cartella clinica','Pazienti','Anagrafica, anamnesi, allergie, preferenze e consensi.'],
+  visits:['Monitoraggio','Visite','Registra controlli, peso, circonferenze e obiettivi.'],
+  bia:['Composizione corporea','Analisi BIA','Storico delle misurazioni bioimpedenziometriche.'],
+  plans:['Piani alimentari','Piani','Bozze, pubblicazioni e storico dei piani.'],
+  generator:['Motore dieta 2.1','Genera dieta','Crea un piano con vincoli, varietà ed equivalenze semantiche.'],
+  foods:['Database alimentare','Alimenti','Catalogo CREA + USDA e alimenti personalizzati.'],
+  documents:['Archivio clinico','Documenti','File clinici e documenti visibili al paziente.'],
+  patientHome:['Area paziente','Il tuo percorso','Dati e aggiornamenti del tuo percorso nutrizionale.'],
+  patientPlans:['Area paziente','Piano alimentare','Consulta i piani pubblicati dal nutrizionista.'],
+  patientBia:['Area paziente','Composizione corporea','Consulta le analisi BIA condivise con te.'],
+  patientDocuments:['Area paziente','Documenti','Consulta i documenti resi disponibili dal nutrizionista.']
+};
+
+function toast(message,type='ok'){
+  const t=$('#toast'); t.textContent=message; t.className=`toast show ${type==='error'?'error':''}`;
+  clearTimeout(window.__toastTimer); window.__toastTimer=setTimeout(()=>t.className='toast',3500);
+}
+function setLoading(on,title='Caricamento',text='Operazione in corso…'){
+  $('#loadingTitle').textContent=title; $('#loadingText').textContent=text; $('#loadingOverlay').classList.toggle('hidden',!on);
+}
+function openModal(html){ $('#modalContent').innerHTML=html; $('#modal').classList.remove('hidden'); $('#modal').setAttribute('aria-hidden','false'); }
+function closeModal(){ $('#modal').classList.add('hidden'); $('#modal').setAttribute('aria-hidden','true'); $('#modalContent').innerHTML=''; }
+function showAuth(){ $('#authView').classList.remove('hidden'); $('#appView').classList.add('hidden'); }
+function showApp(){ $('#authView').classList.add('hidden'); $('#appView').classList.remove('hidden'); }
+
+async function init(){
+  bindGlobalEvents();
+  supabase.auth.onAuthStateChange(async(event,s)=>{
+    session=s;
+    if(event==='PASSWORD_RECOVERY'){
+      showAuth(); $('#loginForm').classList.add('hidden'); $('#recoveryBtn').classList.add('hidden'); $('#passwordForm').classList.remove('hidden');
+      return;
+    }
+    if(s) await enterApp(); else showAuth();
+  });
+  const {data:{session:s}}=await supabase.auth.getSession(); session=s;
+  if(s) await enterApp(); else showAuth();
+}
+
+function bindGlobalEvents(){
+  $('#loginForm').addEventListener('submit',async e=>{
+    e.preventDefault(); $('#loginError').textContent='';
+    const {error}=await supabase.auth.signInWithPassword({email:val('#loginEmail'),password:val('#loginPassword')});
+    if(error) $('#loginError').textContent=error.message;
+  });
+  $('#recoveryBtn').addEventListener('click',async()=>{
+    const email=val('#loginEmail');
+    if(!email){ $('#loginError').textContent='Inserisci prima l’email.'; return; }
+    const {error}=await supabase.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
+    $('#loginError').textContent=error?error.message:'Ti abbiamo inviato il link per impostare o recuperare la password.';
+  });
+  $('#passwordForm').addEventListener('submit',async e=>{
+    e.preventDefault(); const password=val('#newPassword'); const {error}=await supabase.auth.updateUser({password});
+    if(error){$('#loginError').textContent=error.message;return;} toast('Password aggiornata.'); $('#passwordForm').classList.add('hidden'); await enterApp();
+  });
+  $('#logoutBtn').addEventListener('click',()=>supabase.auth.signOut());
+  $('#mobileNavBtn').addEventListener('click',()=>$('.sidebar').classList.toggle('open'));
+  document.addEventListener('click',e=>{
+    if(e.target.closest('[data-close-modal]')) closeModal();
+    const nav=e.target.closest('[data-page]'); if(nav){ navigate(nav.dataset.page); $('.sidebar').classList.remove('open'); }
+    const openPlan=e.target.closest('[data-open-plan-global]'); if(openPlan) openPlanFromAny(openPlan.dataset.openPlanGlobal);
+  });
+}
+
+async function enterApp(){
+  if(!session) return;
+  const {data,error}=await supabase.from('profiles').select('*').eq('id',session.user.id).maybeSingle();
+  if(error||!data){ toast(error?.message||'Profilo non trovato.','error'); return; }
+  profile=data; showApp();
+  $('#userName').textContent=data.full_name||'Utente'; $('#userEmail').textContent=data.email||session.user.email||'';
+  $('#userInitials').textContent=(data.full_name||session.user.email||'U').split(/\s+|@/).map(x=>x[0]).join('').slice(0,2).toUpperCase();
+  $('#roleLabel').textContent=data.role==='nutritionist'?'Gestionale nutrizionale':'Area paziente';
+  if(data.role==='nutritionist'){
+    await loadPatients(); renderNav(nutritionistNav); navigate(currentPage && nutritionistNav.some(x=>x[0]===currentPage)?currentPage:'dashboard');
+  }else{
+    const {data:p,error:pe}=await supabase.from('patients').select('*').eq('user_id',session.user.id).maybeSingle();
+    if(pe){toast(pe.message,'error');return;} selfPatient=p; renderNav(patientNav); navigate(currentPage && patientNav.some(x=>x[0]===currentPage)?currentPage:'patientHome');
+  }
+}
+function renderNav(items){
+  $('#mainNav').innerHTML=items.map(([page,icon,label])=>`<button class="nav-item ${page===currentPage?'active':''}" data-page="${page}">${icon}<span>${label}</span></button>`).join('');
+}
+async function navigate(page){
+  currentPage=page; const meta=pageMeta[page]||pageMeta.dashboard; $('#pageEyebrow').textContent=meta[0]; $('#pageTitle').textContent=meta[1]; $('#pageSubtitle').textContent=meta[2];
+  $$('#mainNav .nav-item').forEach(x=>x.classList.toggle('active',x.dataset.page===page));
+  const root=$('#pageRoot'); root.innerHTML='<div class="card empty-state">Caricamento…</div>';
+  try{
+    if(page==='dashboard') await renderDashboard();
+    else if(page==='patients') await renderPatients();
+    else if(page==='visits') await renderVisits();
+    else if(page==='bia') await renderBia();
+    else if(page==='plans') await renderPlans();
+    else if(page==='generator') await renderGenerator();
+    else if(page==='foods') await renderFoods();
+    else if(page==='documents') await renderDocuments();
+    else if(page==='patientHome') await renderPatientHome();
+    else if(page==='patientPlans') await renderPatientPlans();
+    else if(page==='patientBia') await renderPatientBia();
+    else if(page==='patientDocuments') await renderPatientDocuments();
+  }catch(e){root.innerHTML=`<div class="card empty-state">${esc(e.message||String(e))}</div>`; toast(e.message||String(e),'error');}
+}
+
+async function loadPatients(){
+  const {data,error}=await supabase.from('patients').select('*').order('last_name').order('first_name');
+  if(error) throw error; patients=data||[];
+}
+const patientName=id=>{const p=patients.find(x=>x.id===id);return p?`${p.last_name} ${p.first_name}`:'—'};
+const patientOptions=(selected='')=>'<option value="">Tutti i pazienti</option>'+patients.map(p=>`<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.last_name)} ${esc(p.first_name)}</option>`).join('');
+
+async function renderDashboard(){
+  const root=$('#pageRoot');
+  const [patientCount,visitCount,planCount,biaCount,recentVisits,recentPlans]=await Promise.all([
+    supabase.from('patients').select('id',{count:'exact',head:true}),
+    supabase.from('visits').select('id',{count:'exact',head:true}),
+    supabase.from('diet_plans').select('id',{count:'exact',head:true}),
+    supabase.from('bia_records').select('id',{count:'exact',head:true}),
+    supabase.from('visits').select('*').order('visit_date',{ascending:false}).limit(6),
+    supabase.from('diet_plans').select('*').order('created_at',{ascending:false}).limit(6)
+  ]);
+  root.innerHTML=`<div class="grid four">
+    ${kpi('Pazienti',patientCount.count||0,'Cartelle cliniche')}${kpi('Visite',visitCount.count||0,'Controlli registrati')}${kpi('Analisi BIA',biaCount.count||0,'Misurazioni')}${kpi('Piani',planCount.count||0,'Bozze e pubblicati')}
+  </div><div class="grid two section-block">
+    <div class="card"><div class="card-title"><h3>Visite recenti</h3><button class="btn small" data-page="visits">Apri visite</button></div>${visitTable(recentVisits.data||[],6)}</div>
+    <div class="card"><div class="card-title"><h3>Piani recenti</h3><button class="btn small" data-page="plans">Apri piani</button></div>${planMiniList(recentPlans.data||[])}</div>
+  </div>`;
+}
+function kpi(label,value,sub){const display=typeof value==='number'?fmt(value):esc(value??'—');return `<div class="card kpi-card"><span>${label}</span><strong>${display}</strong><small>${esc(sub||'')}</small></div>`;}
+function visitTable(rows,limit=null){
+  const list=limit?rows.slice(0,limit):rows; if(!list.length)return '<div class="empty-state">Nessuna visita.</div>';
+  return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Data</th><th>Paziente</th><th>Peso</th><th>Obiettivo</th><th>Prossima</th></tr></thead><tbody>${list.map(v=>`<tr><td>${dateIt(v.visit_date)}</td><td>${esc(patientName(v.patient_id))}</td><td>${v.weight_kg?fmt(v.weight_kg,1)+' kg':'—'}</td><td>${esc(v.goal||'—')}</td><td>${dateIt(v.next_visit)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+function planMiniList(rows){if(!rows.length)return '<div class="empty-state">Nessun piano.</div>';return `<div class="history-list">${rows.map(p=>`<div class="history-row"><div><strong>${esc(p.title)}</strong><small>${esc(patientName(p.patient_id))} · ${dateTimeIt(p.created_at)}</small></div><span class="status-badge ${p.status}">${esc(p.status)}</span><button class="btn small" data-open-plan-global="${p.id}">Apri</button></div>`).join('')}</div>`;}
+
+async function renderPatients(){
+  const root=$('#pageRoot');
+  root.innerHTML=`<div class="toolbar"><div class="filters"><input id="patientSearch" type="search" placeholder="Cerca nome, email o telefono…"></div><button id="addPatientBtn" class="btn primary">+ Nuovo paziente</button></div><div id="patientsTable"></div><div id="patientDetail"></div>`;
+  const draw=()=>{const q=val('#patientSearch').toLowerCase(); const rows=patients.filter(p=>`${p.first_name} ${p.last_name} ${p.email||''} ${p.phone||''}`.toLowerCase().includes(q)); $('#patientsTable').innerHTML=patientTable(rows);}; draw();
+  $('#patientSearch').addEventListener('input',draw); $('#addPatientBtn').addEventListener('click',()=>openPatientForm());
+  $('#patientsTable').addEventListener('click',e=>{const id=e.target.closest('[data-patient-id]')?.dataset.patientId;if(id)showPatientDetail(id);const edit=e.target.closest('[data-edit-patient]')?.dataset.editPatient;if(edit)openPatientForm(patients.find(p=>p.id===edit));});
+}
+function patientTable(rows){if(!rows.length)return '<div class="empty-state">Nessun paziente trovato.</div>';return `<div class="table-wrap"><table class="data-table"><thead><tr><th>Paziente</th><th>Contatti</th><th>Nascita</th><th>Altezza</th><th>Portale</th><th></th></tr></thead><tbody>${rows.map(p=>`<tr><td><div class="table-primary">${esc(p.last_name)} ${esc(p.first_name)}</div><div class="table-secondary">${esc(p.sex||'')}</div></td><td>${esc(p.email||'—')}<div class="table-secondary">${esc(p.phone||'')}</div></td><td>${dateIt(p.birth_date)}</td><td>${p.height_cm?fmt(p.height_cm)+' cm':'—'}</td><td>${p.user_id?'<span class="status-badge published">Collegato</span>':'<span class="status-badge draft">Non collegato</span>'}</td><td><div class="actions"><button class="btn small" data-patient-id="${p.id}">Apri</button><button class="btn small" data-edit-patient="${p.id}">Modifica</button></div></td></tr>`).join('')}</tbody></table></div>`;}
+async function showPatientDetail(id){
+  const p=patients.find(x=>x.id===id); if(!p)return; setLoading(true,'Cartella clinica','Carico visite, BIA, piani e consensi.');
+  try{
+    const [visit,bia,plans,consents]=await Promise.all([
+      supabase.from('visits').select('*').eq('patient_id',id).order('visit_date',{ascending:false}).limit(1).maybeSingle(),
+      supabase.from('bia_records').select('*').eq('patient_id',id).order('measured_at',{ascending:false}).limit(1).maybeSingle(),
+      supabase.from('diet_plans').select('*').eq('patient_id',id).order('created_at',{ascending:false}).limit(5),
+      supabase.from('consents').select('*').eq('patient_id',id).order('created_at',{ascending:false})
+    ]);
+    const v=visit.data,b=bia.data,c=consents.data||[];
+    $('#patientDetail').innerHTML=`<div class="card detail-card"><div class="card-title"><div><p class="eyebrow">Cartella clinica</p><h3>${esc(p.first_name)} ${esc(p.last_name)}</h3></div><div class="actions"><button class="btn small" data-new-visit-for="${p.id}">+ Visita</button><button class="btn small" data-new-bia-for="${p.id}">+ BIA</button><button class="btn small" data-new-consent-for="${p.id}">+ Consenso</button><button class="btn primary small" data-generator-for="${p.id}">Genera dieta</button></div></div>
+      <div class="detail-grid">${stat('Età',p.birth_date?Math.floor((Date.now()-new Date(p.birth_date))/31557600000):'—')}${stat('Ultimo peso',b?.weight_kg||v?.weight_kg?`${fmt(b?.weight_kg||v?.weight_kg,1)} kg`:'—')}${stat('Massa grassa',b?.body_fat_pct?`${fmt(b.body_fat_pct,1)}%`:'—')}${stat('BMR',b?.bmr_kcal?`${fmt(b.bmr_kcal)} kcal`:'—')}</div>
+      <div class="grid two section-block"><div 
