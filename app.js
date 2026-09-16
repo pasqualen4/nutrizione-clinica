@@ -80,12 +80,25 @@ function updateShareTotal(){ const total=$$('.meal-share').reduce((a,x)=>a+Numbe
 function applyMacroPct(){ const kcal=num('#calories'), p=num('#proteinPct'), c=num('#carbsPct'), f=num('#fatPct'); if(Math.round(p+c+f)!==100){toast('Le percentuali dei macro devono sommare 100%.','error');return;} $('#protein').value=Math.round(kcal*p/100/4); $('#carbs').value=Math.round(kcal*c/100/4); $('#fat').value=Math.round(kcal*f/100/9); updateSummary(); }
 function getMealShares(){ return Object.fromEntries($$('.meal-share').map(x=>[x.dataset.meal,Number(x.value||0)/100])); }
 function getFrequency(){ const out={}; $$('[data-freq]').forEach(x=>out[x.dataset.freq]={max:Number(x.value||0)}); return out; }
+async function functionErrorMessage(error){
+  if(!error) return 'Errore sconosciuto';
+  try{
+    const response=error.context;
+    if(response){
+      const payload=await (response.clone?response.clone():response).json();
+      if(payload?.error) return payload.error;
+      if(payload?.message) return payload.message;
+    }
+  }catch{}
+  return error.message||String(error);
+}
 function generationBody(){
+  const mealShares=getMealShares();
   return {
     patient_id:selectedPatient.id, title:val('#planTitle'), goal:val('#goal'), days:num('#days'),
     calories_target:num('#calories'), protein_target_g:num('#protein'), carbs_target_g:num('#carbs'), fat_target_g:num('#fat'), fiber_target_g:num('#fiber'), sodium_limit_mg:num('#sodium')||null,
     bmr_kcal:num('#bmr')||null, tdee_kcal:num('#tdee')||null, activity_factor:num('#activityFactor')||null,
-    dietary_pattern:val('#dietaryPattern'), meals:['breakfast','morning_snack','lunch','afternoon_snack','dinner'], meal_shares:getMealShares(),
+    dietary_pattern:val('#dietaryPattern'), meals:['breakfast','morning_snack','lunch','afternoon_snack','dinner'].map(type=>({type,share:mealShares[type]})), meal_shares:mealShares,
     allergies:splitList(val('#allergiesExtra')), excluded_foods:splitList(val('#excludedFoods')), preferences:splitList(val('#preferences')),
     clinical_notes:val('#clinicalNotes'), patient_notes:val('#patientNotes'), weekly_frequency:getFrequency()
   };
@@ -97,7 +110,7 @@ async function generatePlan(){
   setLoading(true);
   try{
     const {data,error}=await supabase.functions.invoke('generate-diet-plan',{body:generationBody()});
-    if(error) throw error; if(data?.error) throw new Error(data.error);
+    if(error) throw new Error(await functionErrorMessage(error)); if(data?.error) throw new Error(data.error);
     currentPlanId=data.plan_id; toast(`Piano generato · score ${fmt(data.quality_score,1)}%`); await loadPlan(currentPlanId); await loadRecentPlans();
     $('#planSection').scrollIntoView({behavior:'smooth'});
   }catch(e){toast(e.message||String(e),'error');}finally{setLoading(false);}
@@ -139,7 +152,7 @@ function renderMeal(meal){
 }
 async function regenerateDay(day){
   if(!currentPlanId)return; setLoading(true,`Rigenero ${dayLabels[day]||'il giorno'}`,'Mantengo i target e considero gli alimenti già usati negli altri giorni.');
-  try{ const {data,error}=await supabase.functions.invoke('regenerate-diet-day',{body:{plan_id:currentPlanId,day_number:day}}); if(error)throw error;if(data?.error)throw new Error(data.error);toast(`Giorno rigenerato · score ${fmt(data.quality_score,1)}%`);await loadPlan(currentPlanId); }catch(e){toast(e.message||String(e),'error');}finally{setLoading(false);}
+  try{ const {data,error}=await supabase.functions.invoke('regenerate-diet-day',{body:{plan_id:currentPlanId,day_number:day}}); if(error)throw new Error(await functionErrorMessage(error));if(data?.error)throw new Error(data.error);toast(`Giorno rigenerato · score ${fmt(data.quality_score,1)}%`);await loadPlan(currentPlanId); }catch(e){toast(e.message||String(e),'error');}finally{setLoading(false);}
 }
 async function publishPlan(){
   if(!currentPlanId)return; if(!confirm('Pubblicare questo piano al paziente? Dopo la pubblicazione sarà visibile nella sua area riservata.'))return;
