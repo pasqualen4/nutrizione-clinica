@@ -13,7 +13,8 @@ const runtimeParts = [
   './runtime/part03.txt',
   './runtime/part04.txt',
   './runtime/part05.txt',
-  './runtime/part06.txt'
+  './runtime/part06.txt',
+  './runtime/part07.txt'
 ];
 
 try {
