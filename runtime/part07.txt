@@ -1,0 +1,4 @@
+// --- Patch 3.0: etichette UI ---
+pageMeta.generator=['Motore dieta 3.0','Genera dieta','Pasti realistici, porzioni discrete, vincoli hard e varietà settimanale.'];
+const __generatorTemplateV3Base=generatorTemplate;
+generatorTemplate=function(){return __generatorTemplateV3Base().replace('motore semantico 2.1','motore semantico 3.0').replace('Le equivalenze mostrate provengono dal motore semantico 2.1.','Le equivalenze mostrate provengono dal motore semantico 3.0.');};
