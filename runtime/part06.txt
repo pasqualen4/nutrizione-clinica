@@ -1,0 +1,10 @@
+// --- Patch 3.0: rigenerazione giorno con lo stesso motore v3 ---
+regenerateDay = async function(day){
+  if(!currentPlanId)return;
+  setLoading(true,`Rigenero ${dayLabels[day]||'il giorno'}`,'Uso lo stesso motore 3.0 mantenendo target, vincoli e varietà del piano.');
+  try{
+    const {data,error}=await supabase.functions.invoke('regenerate-diet-day-v3',{body:{plan_id:currentPlanId,day_number:day}});
+    if(error)throw new Error(await edgeError(error));if(data?.error)throw new Error(data.error);
+    toast(`Giorno rigenerato · score ${fmt(data.quality_score,1)}%`);await loadGeneratorPlan(currentPlanId);
+  }catch(err){toast(err.message||String(err),'error');}finally{setLoading(false);}
+};
