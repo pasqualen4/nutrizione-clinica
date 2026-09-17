@@ -1,0 +1,99 @@
+// --- Patch 3.0: esportazione PDF professionale ---
+const __loadedScripts = new Map();
+function loadExternalScript(src){
+  if(__loadedScripts.has(src))return __loadedScripts.get(src);
+  const p=new Promise((resolve,reject)=>{
+    const existing=[...document.scripts].find(s=>s.src===src); if(existing){resolve();return;}
+    const s=document.createElement('script');s.src=src;s.async=true;s.onload=()=>resolve();s.onerror=()=>reject(new Error(`Impossibile caricare ${src}`));document.head.appendChild(s);
+  });
+  __loadedScripts.set(src,p);return p;
+}
+async function ensurePdfEngine(){
+  if(!window.jspdf?.jsPDF)await loadExternalScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js');
+  if(!window.jspdf?.jsPDF)throw new Error('Motore PDF non disponibile.');
+  if(!window.jspdf.jsPDF.API.autoTable)await loadExternalScript('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js');
+}
+function pdfSafe(v=''){return String(v??'').replace(/[–—]/g,'-').replace(/[’‘]/g,"'").replace(/[“”]/g,'"').replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g,'');}
+function pdfLine(doc,label,value,x,y,w=80){doc.setFontSize(8);doc.setTextColor(104,120,112);doc.text(pdfSafe(label).toUpperCase(),x,y);doc.setFontSize(11);doc.setTextColor(27,38,34);const lines=doc.splitTextToSize(pdfSafe(value||'-'),w);doc.text(lines,x,y+5);return y+5+lines.length*4.4;}
+function safeFilename(s){return pdfSafe(s||'piano-alimentare').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80)||'piano-alimentare';}
+async function getPdfData(planId){
+  const {data:plan,error:planErr}=await supabase.from('diet_plans').select('*').eq('id',planId).single();if(planErr)throw planErr;
+  const {data:patient,error:pErr}=await supabase.from('patients').select('*').eq('id',plan.patient_id).single();if(pErr)throw pErr;
+  const [{data:clinic},{data:metrics},{data:meals,error:mErr},{data:eq,error:eqErr}]=await Promise.all([
+    profile?.clinic_id?supabase.from('clinics').select('name').eq('id',profile.clinic_id).maybeSingle():Promise.resolve({data:null}),
+    supabase.from('diet_plan_day_metrics').select('*').eq('plan_id',planId).order('day_number'),
+    supabase.from('plan_meals').select('id,day_number,meal_type,sort_order,preparation_title,instructions,plan_food_items(id,food_id,food_name,quantity_g,unit,calories,protein_g,carbs_g,fat_g,fiber_g,food_category,slot_key)').eq('plan_id',planId).order('day_number').order('sort_order'),
+    supabase.rpc('get_plan_equivalent_candidates',{p_plan_id:planId,p_limit:2})
+  ]);
+  if(mErr)throw mErr;if(eqErr)throw eqErr;
+  const eqMap={};(eq||[]).forEach(x=>(eqMap[x.base_item_id]??=[]).push(x));
+  return {plan,patient,clinic:clinic||null,metrics:metrics||[],meals:meals||[],eqMap};
+}
+async function exportPlanPdf(planId){
+  if(!planId)return;
+  setLoading(true,'Esportazione PDF','Preparo copertina, dati paziente e piano alimentare.');
+  try{
+    await ensurePdfEngine();
+    const {jsPDF}=window.jspdf;const {plan,patient,clinic,metrics,meals,eqMap}=await getPdfData(planId);
+    const doc=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'});const W=210,H=297,M=16;
+    doc.setFillColor(23,62,53);doc.rect(0,0,W,52,'F');doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(24);doc.text('PIANO ALIMENTARE',M,24);doc.setFontSize(11);doc.setFont('helvetica','normal');doc.text(pdfSafe(plan.title||'Piano nutrizionale personalizzato'),M,34,{maxWidth:178});doc.setFontSize(9);doc.text(`Elaborato il ${dateIt(plan.created_at)}${plan.status==='published'&&plan.published_at?` - pubblicato il ${dateIt(plan.published_at)}`:''}`,M,44);
+
+    let y=68;doc.setTextColor(29,90,78);doc.setFont('helvetica','bold');doc.setFontSize(12);doc.text('NUTRIZIONISTA',M,y);y+=7;
+    doc.setFillColor(247,250,248);doc.roundedRect(M,y,178,55,3,3,'F');
+    const left=M+6,right=108;let yl=y+9,yr=y+9;
+    yl=pdfLine(doc,'Professionista',profile?.full_name||'Nutrizionista',left,yl,78);
+    yl=pdfLine(doc,'Qualifica',profile?.professional_title||'',left,yl+2,78);
+    yl=pdfLine(doc,'Studio',clinic?.name||'',left,yl+2,78);
+    yr=pdfLine(doc,'Email',profile?.email||'',right,yr,78);
+    yr=pdfLine(doc,'Telefono',profile?.phone||'',right,yr+2,78);
+    yr=pdfLine(doc,'Albo',profile?.registration_number||'',right,yr+2,78);
+    const address=[profile?.address,[profile?.postal_code,profile?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');if(address)yr=pdfLine(doc,'Indirizzo',address,right,yr+2,78);
+    y+=65;
+
+    doc.setTextColor(29,90,78);doc.setFont('helvetica','bold');doc.setFontSize(12);doc.text('PAZIENTE',M,y);y+=7;
+    doc.setFillColor(247,250,248);doc.roundedRect(M,y,178,48,3,3,'F');yl=y+9;yr=y+9;
+    yl=pdfLine(doc,'Nome e cognome',`${patient.first_name||''} ${patient.last_name||''}`.trim(),left,yl,78);
+    yl=pdfLine(doc,'Data di nascita',dateIt(patient.birth_date),left,yl+2,78);
+    yl=pdfLine(doc,'Sesso',patient.sex||'',left,yl+2,78);
+    yr=pdfLine(doc,'Email',patient.email||'',right,yr,78);
+    yr=pdfLine(doc,'Telefono',patient.phone||'',right,yr+2,78);
+    yr=pdfLine(doc,'Altezza',patient.height_cm?`${fmt(patient.height_cm,1)} cm`:'',right,yr+2,78);
+    y+=58;
+
+    doc.setTextColor(29,90,78);doc.setFont('helvetica','bold');doc.setFontSize(12);doc.text('OBIETTIVI DEL PIANO',M,y);y+=7;
+    doc.setFillColor(232,243,239);doc.roundedRect(M,y,178,38,3,3,'F');
+    doc.setFontSize(10);doc.setTextColor(27,38,34);doc.setFont('helvetica','bold');doc.text(`${fmt(plan.calories_target)} kcal`,M+7,y+10);doc.text(`Proteine ${fmt(plan.protein_target_g)} g`,M+45,y+10);doc.text(`Carboidrati ${fmt(plan.carbs_target_g)} g`,M+93,y+10);doc.text(`Grassi ${fmt(plan.fat_target_g)} g`,M+144,y+10);
+    doc.setFont('helvetica','normal');doc.setFontSize(9);doc.text(`Obiettivo: ${pdfSafe(plan.goal||'-')}`,M+7,y+20,{maxWidth:164});doc.text(`Fibra: ${fmt(plan.fiber_target_g)} g${plan.sodium_limit_mg?` - Sodio max: ${fmt(plan.sodium_limit_mg)} mg`:''}`,M+7,y+29);
+    y+=48;
+    if(plan.patient_notes){doc.setTextColor(29,90,78);doc.setFont('helvetica','bold');doc.setFontSize(11);doc.text('INDICAZIONI',M,y);doc.setFont('helvetica','normal');doc.setTextColor(64,75,69);doc.setFontSize(9);doc.text(doc.splitTextToSize(pdfSafe(plan.patient_notes),178),M,y+6);}
+
+    const grouped={};meals.forEach(m=>(grouped[m.day_number]??=[]).push(m));const metricByDay=Object.fromEntries(metrics.map(m=>[m.day_number,m]));const days=[...new Set(meals.map(m=>m.day_number))].sort((a,b)=>a-b);
+    for(const day of days){
+      doc.addPage();const metric=metricByDay[day];
+      doc.setFillColor(23,62,53);doc.rect(0,0,W,28,'F');doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(16);doc.text(`${dayLabels[day]||`Giorno ${day}`} - Giorno ${day}`,M,18);
+      doc.setTextColor(27,38,34);doc.setFontSize(9);doc.setFont('helvetica','normal');const meta=metric?`${fmt(metric.calories)} kcal - P ${fmt(metric.protein_g)} g - C ${fmt(metric.carbs_g)} g - G ${fmt(metric.fat_g)} g - Fibra ${fmt(metric.fiber_g)} g`:'';doc.text(pdfSafe(meta),M,38);
+      const rows=[];
+      for(const meal of grouped[day]||[]){let first=true;for(const item of meal.plan_food_items||[]){const alternatives=(eqMap[item.id]||[]).map(e=>`${pdfSafe(e.food_name)} ${fmt(e.quantity_g)} g`).join(' / ');rows.push([first?(mealLabels[meal.meal_type]||meal.meal_type):'',pdfSafe(item.food_name),`${fmt(item.quantity_g)} ${item.unit||'g'}`,alternatives]);first=false;}}
+      doc.autoTable({startY:44,head:[['Pasto','Alimento','Quantita','Alternative equivalenti']],body:rows,theme:'grid',margin:{left:M,right:M,bottom:22},styles:{font:'helvetica',fontSize:8,cellPadding:2.3,valign:'top',lineColor:[222,229,224],lineWidth:.2,textColor:[35,45,40]},headStyles:{fillColor:[29,90,78],textColor:255,fontStyle:'bold'},columnStyles:{0:{cellWidth:27,fontStyle:'bold'},1:{cellWidth:62},2:{cellWidth:23,halign:'right'},3:{cellWidth:66}},alternateRowStyles:{fillColor:[249,251,249]}});
+    }
+    const pages=doc.getNumberOfPages();
+    for(let p=1;p<=pages;p++){doc.setPage(p);doc.setDrawColor(220,226,222);doc.line(M,H-15,W-M,H-15);doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.setTextColor(112,123,117);const footer=pdfSafe(profile?.pdf_footer||`${profile?.full_name||'Nutrizionista'} - Piano alimentare personalizzato`);doc.text(footer,M,H-9,{maxWidth:145});doc.text(`Pagina ${p}/${pages}`,W-M,H-9,{align:'right'});}
+    doc.save(`${safeFilename(plan.title)}-${safeFilename(`${patient.last_name}-${patient.first_name}`)}.pdf`);
+    toast('PDF esportato.');
+  }catch(err){console.error(err);toast(err.message||String(err),'error');}finally{setLoading(false);}
+}
+
+const __loadGeneratorPlanBase=loadGeneratorPlan;
+loadGeneratorPlan=async function(id){
+  await __loadGeneratorPlanBase(id);
+  const actions=$('#planActions');if(actions&&!actions.querySelector('[data-export-current-pdf]')){const b=document.createElement('button');b.className='btn';b.dataset.exportCurrentPdf=id;b.textContent='Esporta PDF';b.addEventListener('click',()=>exportPlanPdf(id));actions.prepend(b);}
+};
+
+openPlanFromAny=async function(planId){
+  if(currentPage!=='plans')await navigate('plans');
+  const target=$('#globalPlanDetail');if(!target)return;target.innerHTML='<div class="card empty-state">Caricamento piano…</div>';
+  const {html,plan}=await getPlanMarkup(planId,false);currentPlanId=planId;
+  target.innerHTML=`<div class="section-title"><h3>Dettaglio piano</h3><div class="actions"><button class="btn" data-export-plan-pdf="${planId}">Esporta PDF</button>${plan.status!=='published'?`<button id="globalPublishBtn" class="btn primary">Pubblica</button>`:''}</div></div>${html}`;
+  target.querySelector('[data-export-plan-pdf]')?.addEventListener('click',()=>exportPlanPdf(planId));
+  $('#globalPublishBtn')?.addEventListener('click',()=>publishPlan(planId,()=>openPlanFromAny(planId)));
+};
