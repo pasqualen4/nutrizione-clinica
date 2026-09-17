@@ -10,7 +10,9 @@ const runtimeParts = [
   './runtime/part00.txt',
   './runtime/part01.txt',
   './runtime/part02.txt',
-  './runtime/part03.txt'
+  './runtime/part03.txt',
+  './runtime/part04.txt',
+  './runtime/part05.txt'
 ];
 
 try {
@@ -19,7 +21,8 @@ try {
     if (!response.ok) throw new Error(`Impossibile caricare ${path}: ${response.status}`);
     return response.text();
   }));
-  const runtime = parts.join('');
+  parts[3] = parts[3].replace(/\n?init\(\);\s*$/, '\n');
+  const runtime = `${parts.join('')}\ninit();\n`;
   new Function('supabase', runtime)(supabase);
 } catch (error) {
   console.error(error);
