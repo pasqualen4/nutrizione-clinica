@@ -1,0 +1,87 @@
+// --- Patch 3.0: accesso paziente, profilo professionale e generatore v3 ---
+if (!nutritionistNav.some(x=>x[0]==='settings')) nutritionistNav.push(['settings','⚙','Profilo PDF']);
+pageMeta.settings=['Impostazioni','Profilo professionale','Dati utilizzati nella prima pagina dei PDF esportati.'];
+
+const __navigateBase = navigate;
+navigate = async function(page){
+  if(page!=='settings') return __navigateBase(page);
+  currentPage=page;
+  const meta=pageMeta.settings;
+  $('#pageEyebrow').textContent=meta[0]; $('#pageTitle').textContent=meta[1]; $('#pageSubtitle').textContent=meta[2];
+  $$('#mainNav .nav-item').forEach(x=>x.classList.toggle('active',x.dataset.page===page));
+  await renderProfessionalSettings();
+};
+
+async function renderProfessionalSettings(){
+  const root=$('#pageRoot');
+  let clinicName='';
+  if(profile?.clinic_id){
+    const {data}=await supabase.from('clinics').select('name').eq('id',profile.clinic_id).maybeSingle();
+    clinicName=data?.name||'';
+  }
+  root.innerHTML=`<div class="grid two"><div class="card"><div class="card-title"><div><p class="eyebrow">Copertina PDF</p><h3>Dati professionali</h3></div></div>
+  <form id="professionalProfileForm"><div class="form-grid cols-2">
+    <label>Nome e cognome<input name="full_name" value="${esc(profile?.full_name||'')}"></label>
+    <label>Qualifica<input name="professional_title" placeholder="es. Biologa Nutrizionista" value="${esc(profile?.professional_title||'')}"></label>
+    <label>Studio / struttura<input value="${esc(clinicName)}" disabled></label>
+    <label>Email<input value="${esc(profile?.email||'')}" disabled></label>
+    <label>Telefono<input name="phone" value="${esc(profile?.phone||'')}"></label>
+    <label>N. iscrizione Albo<input name="registration_number" value="${esc(profile?.registration_number||'')}"></label>
+    <label>Partita IVA<input name="vat_number" value="${esc(profile?.vat_number||'')}"></label>
+    <label>Sito web<input name="website" value="${esc(profile?.website||'')}"></label>
+    <label class="span-2">Indirizzo<input name="address" value="${esc(profile?.address||'')}"></label>
+    <label>Città<input name="city" value="${esc(profile?.city||'')}"></label>
+    <label>CAP<input name="postal_code" value="${esc(profile?.postal_code||'')}"></label>
+    <label class="span-2">Testo a piè di pagina<textarea name="pdf_footer" rows="3" placeholder="es. Piano elaborato per uso personale del paziente.">${esc(profile?.pdf_footer||'')}</textarea></label>
+  </div><div class="modal-actions"><button class="btn primary" type="submit">Salva dati PDF</button></div></form></div>
+  <div class="card"><p class="eyebrow">Anteprima contenuti</p><h3>Prima pagina</h3><p class="muted">Nel PDF verranno riportati automaticamente i dati professionali salvati qui, i dati anagrafici del paziente, l'obiettivo e i target nutrizionali del piano.</p><div class="note-box"><strong>${esc(profile?.full_name||'Nutrizionista')}</strong><br>${esc(profile?.professional_title||'Qualifica professionale')}<br>${esc(clinicName||'Studio')}<br>${esc(profile?.email||'')}</div></div></div>`;
+  $('#professionalProfileForm').addEventListener('submit',async e=>{
+    e.preventDefault();
+    const payload=Object.fromEntries(new FormData(e.currentTarget).entries());
+    setLoading(true,'Salvataggio','Aggiorno i dati professionali.');
+    try{
+      const {data,error}=await supabase.from('profiles').update(payload).eq('id',session.user.id).select('*').single();
+      if(error)throw error; profile=data; $('#userName').textContent=data.full_name||'Nutrizionista'; toast('Dati professionali salvati.'); await renderProfessionalSettings();
+    }catch(err){toast(err.message||String(err),'error');}finally{setLoading(false);}
+  });
+}
+
+async function activatePatientAccess(patientId){
+  const p=patients.find(x=>x.id===patientId); if(!p)return;
+  if(!p.email){toast('Inserisci prima l’email del paziente.','error');return;}
+  setLoading(true,p.user_id?'Reinvio accesso':'Attivazione accesso','Invio l’email per impostare la password.');
+  try{
+    const {data,error}=await supabase.functions.invoke('invite-patient',{body:{patient_id:patientId,redirect_to:location.origin+location.pathname}});
+    if(error)throw new Error(await edgeError(error)); if(data?.error)throw new Error(data.error);
+    toast(data?.message||'Email di accesso inviata.'); await loadPatients(); await showPatientDetail(patientId);
+  }catch(err){toast(err.message||String(err),'error');}finally{setLoading(false);}
+}
+
+bindPatientDetailActions = function(id){
+  const box=$('#patientDetail'); if(!box)return;
+  box.querySelector('[data-new-visit-for]')?.addEventListener('click',()=>openVisitForm(id));
+  box.querySelector('[data-new-bia-for]')?.addEventListener('click',()=>openBiaForm(id));
+  box.querySelector('[data-new-consent-for]')?.addEventListener('click',()=>openConsentForm(id));
+  box.querySelector('[data-generator-for]')?.addEventListener('click',async()=>{selectedPatient=patients.find(p=>p.id===id);await navigate('generator');});
+  const p=patients.find(x=>x.id===id),actions=box.querySelector('.card-title .actions');
+  if(actions&&!actions.querySelector('[data-patient-access]')){
+    const b=document.createElement('button'); b.className='btn small'; b.dataset.patientAccess=id;
+    b.textContent=p?.user_id?'Reinvia accesso':'Attiva area paziente';
+    if(!p?.email){b.disabled=true;b.title='Inserisci prima l’email del paziente';}
+    b.addEventListener('click',()=>activatePatientAccess(id)); actions.prepend(b);
+  }
+};
+
+generatePlan = async function(){
+  if(!selectedPatient){toast('Seleziona prima un paziente.','error');return;}
+  if(!num('#calories')){toast('Inserisci il target calorico.','error');return;}
+  const total=$$('.meal-share').reduce((a,x)=>a+Number(x.value||0),0);
+  if(total!==100){toast('La distribuzione dei pasti deve sommare 100%.','error');return;}
+  setLoading(true,'Generazione piano 3.0','Costruisco pasti realistici con porzioni discrete, varietà settimanale e vincoli hard.');
+  try{
+    const {data,error}=await supabase.functions.invoke('generate-diet-plan-v3',{body:generationBody()});
+    if(error)throw new Error(await edgeError(error)); if(data?.error)throw new Error(data.error);
+    currentPlanId=data.plan_id; toast(`Piano generato · algoritmo ${data.algorithm_version} · score ${fmt(data.quality_score,1)}%`);
+    await loadGeneratorPlan(currentPlanId); await loadRecentGeneratorPlans();
+  }catch(err){toast(err.message||String(err),'error');}finally{setLoading(false);}
+};
